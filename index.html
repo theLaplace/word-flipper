@@ -8,6 +8,23 @@
   <meta http-equiv="Expires" content="0" />
   <title>Vowel Movement</title>
 
+  <script>
+    // Cache-busting redirect for GitHub Pages.
+    // When someone visits the plain URL, redirect once to the current versioned URL.
+    // Update this value whenever APP_VERSION changes.
+    const CACHE_BUST_VERSION = "3.1.0";
+
+    (function redirectToVersionedUrl() {
+      const url = new URL(window.location.href);
+      const currentVersionParam = url.searchParams.get("v");
+
+      if (currentVersionParam !== CACHE_BUST_VERSION) {
+        url.searchParams.set("v", CACHE_BUST_VERSION);
+        window.location.replace(url.toString());
+      }
+    })();
+  </script>
+
   <style>
     :root {
       --bg: #121213;
