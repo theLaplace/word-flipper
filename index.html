@@ -2976,6 +2976,9 @@ const WORDS = [
     let mobileKeyboardSessionActive = false;
     let keyboardFocusScrollTimer = null;
     let keyboardVisualViewportTimer = null;
+    let keyboardOpenScrollPending = false;
+    let keyboardOpenScrollDone = false;
+    let mobileTypedSinceKeyboardOpen = false;
 
     const board = document.getElementById("board");
     const notification = document.getElementById("notification");
@@ -3170,33 +3173,34 @@ const WORDS = [
       const wasAlreadyFocused = document.activeElement === mobileKeyboardInput;
 
       mobileKeyboardInput.focus({ preventScroll: true });
-      setMobileKeyboardCaretToEnd();
 
-      if (!mobileKeyboardSessionActive || !wasAlreadyFocused) {
+      if (!wasAlreadyFocused) {
         mobileKeyboardSessionActive = true;
+        keyboardOpenScrollPending = true;
+        keyboardOpenScrollDone = false;
+        mobileTypedSinceKeyboardOpen = false;
         scheduleKeyboardOpenScroll();
       }
     }
 
     function syncMobileKeyboardInput() {
+      // Keep the hidden input in sync, but do not rely on its caret position.
+      // Mobile browsers can place the caret at the start of hidden inputs, which
+      // causes backwards typing if the hidden input value is trusted.
       mobileKeyboardInput.value = gameSolved ? "" : currentInput;
-      setMobileKeyboardCaretToEnd();
     }
 
     function setMobileKeyboardCaretToEnd() {
-      requestAnimationFrame(() => {
-        try {
-          const end = mobileKeyboardInput.value.length;
-          mobileKeyboardInput.setSelectionRange(end, end);
-        } catch {
-          // Some mobile browsers do not allow selection changes on hidden inputs.
-        }
-      });
+      // Kept as a no-op compatibility function so older calls cannot trigger
+      // mobile browser auto-scroll or caret-based text insertion bugs.
     }
 
     function handleMobileKeyboardFocus() {
       if (!mobileKeyboardSessionActive) {
         mobileKeyboardSessionActive = true;
+        keyboardOpenScrollPending = true;
+        keyboardOpenScrollDone = false;
+        mobileTypedSinceKeyboardOpen = false;
         scheduleKeyboardOpenScroll();
       }
 
@@ -3205,6 +3209,9 @@ const WORDS = [
 
     function handleMobileKeyboardBlur() {
       mobileKeyboardSessionActive = false;
+      keyboardOpenScrollPending = false;
+      keyboardOpenScrollDone = false;
+      mobileTypedSinceKeyboardOpen = false;
       clearTimeout(keyboardFocusScrollTimer);
       clearTimeout(keyboardVisualViewportTimer);
     }
@@ -3213,10 +3220,14 @@ const WORDS = [
       clearTimeout(keyboardFocusScrollTimer);
       clearTimeout(keyboardVisualViewportTimer);
 
-      keyboardFocusScrollTimer = setTimeout(scrollGameAreaForKeyboardOpen, 120);
+      if (!keyboardOpenScrollPending || keyboardOpenScrollDone) {
+        return;
+      }
+
+      keyboardFocusScrollTimer = setTimeout(scrollGameAreaForKeyboardOpen, 180);
 
       if (window.visualViewport) {
-        keyboardVisualViewportTimer = setTimeout(scrollGameAreaForKeyboardOpen, 420);
+        keyboardVisualViewportTimer = setTimeout(scrollGameAreaForKeyboardOpen, 360);
       }
     }
 
@@ -3225,8 +3236,30 @@ const WORDS = [
       return rect.top + window.scrollY;
     }
 
+    function getKeyboardSafeViewport() {
+      const viewport = window.visualViewport;
+
+      if (viewport) {
+        return {
+          top: viewport.pageTop,
+          height: viewport.height
+        };
+      }
+
+      return {
+        top: window.scrollY,
+        height: window.innerHeight
+      };
+    }
+
     function scrollGameAreaForKeyboardOpen() {
-      if (document.activeElement !== mobileKeyboardInput || !mobileKeyboardSessionActive) {
+      if (
+        document.activeElement !== mobileKeyboardInput ||
+        !mobileKeyboardSessionActive ||
+        !keyboardOpenScrollPending ||
+        keyboardOpenScrollDone ||
+        mobileTypedSinceKeyboardOpen
+      ) {
         return;
       }
 
@@ -3238,23 +3271,40 @@ const WORDS = [
         return;
       }
 
-      const viewport = window.visualViewport;
-      const visibleTop = viewport ? viewport.pageTop : window.scrollY;
-      const visibleHeight = viewport ? viewport.height : window.innerHeight;
-      const keyboardTop = visibleTop + visibleHeight;
-      const safeGap = 14;
+      const { height: visibleHeight } = getKeyboardSafeViewport();
+      const bottomGap = 18;
+      const topGap = 12;
 
       const inputRect = inputRow.getBoundingClientRect();
       const targetRect = targetRow.getBoundingClientRect();
       const inputTop = getDocumentTop(inputRow);
-      const targetBottom = getDocumentTop(targetRow) + targetRect.height;
+      const inputCenter = inputTop + (inputRect.height / 2);
+      const targetTop = getDocumentTop(targetRow);
+      const targetBottom = targetTop + targetRect.height;
 
-      const desiredInputTop = visibleTop + ((visibleHeight - targetRect.height - safeGap - inputRect.height) / 2);
-      let desiredScrollTop = inputTop - Math.max(24, desiredInputTop - visibleTop);
+      // First priority: centre the editable input row between the top of the
+      // usable phone screen and the top of the keyboard.
+      let desiredScrollTop = inputCenter - (visibleHeight / 2);
 
-      const targetVisibleScrollTop = targetBottom - visibleHeight + safeGap;
-      desiredScrollTop = Math.max(desiredScrollTop, targetVisibleScrollTop);
+      // Second priority: if the target row would be hidden by the keyboard, move
+      // just enough to keep it fully visible above the keyboard/suggestion area.
+      const targetBottomIfCentered = targetBottom - desiredScrollTop;
+      if (targetBottomIfCentered > visibleHeight - bottomGap) {
+        desiredScrollTop = targetBottom - visibleHeight + bottomGap;
+      }
+
+      // Keep the target row from being pushed off the top on very short screens.
+      const targetTopIfScrolled = targetTop - desiredScrollTop;
+      if (targetTopIfScrolled < topGap) {
+        desiredScrollTop = targetTop - topGap;
+      }
+
       desiredScrollTop = Math.max(0, desiredScrollTop);
+
+      keyboardOpenScrollDone = true;
+      keyboardOpenScrollPending = false;
+      clearTimeout(keyboardFocusScrollTimer);
+      clearTimeout(keyboardVisualViewportTimer);
 
       if (Math.abs(window.scrollY - desiredScrollTop) > 8) {
         window.scrollTo({
@@ -3265,28 +3315,10 @@ const WORDS = [
     }
 
     function handleMobileKeyboardInput(event) {
-      if (
-        gameSolved ||
-        customModal.classList.contains("show") ||
-        shareModal.classList.contains("show")
-      ) {
-        currentInput = "";
-        syncMobileKeyboardInput();
-        return;
-      }
-
-      const sanitizedValue = event.target.value
-        .toLowerCase()
-        .replace(/[^a-z]/g, "")
-        .slice(0, 5);
-
-      if (sanitizedValue !== currentInput) {
-        currentInput = sanitizedValue;
-        clearNotification();
-        renderBoard();
-      }
-
-      syncMobileKeyboardInput();
+      // Mobile typing is intentionally handled in beforeinput so letters always
+      // append left-to-right and only register once. The later input event is
+      // only used to reset the hidden input value if the browser changed it.
+      event.target.value = gameSolved ? "" : currentInput;
     }
 
     function handleMobileKeyboardBeforeInput(event) {
@@ -3296,6 +3328,7 @@ const WORDS = [
         shareModal.classList.contains("show")
       ) {
         event.preventDefault();
+        syncMobileKeyboardInput();
         return;
       }
 
@@ -3307,6 +3340,11 @@ const WORDS = [
 
       if (event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward") {
         event.preventDefault();
+        mobileTypedSinceKeyboardOpen = true;
+        keyboardOpenScrollPending = false;
+        clearTimeout(keyboardFocusScrollTimer);
+        clearTimeout(keyboardVisualViewportTimer);
+
         currentInput = currentInput.slice(0, -1);
         clearNotification();
         renderBoard();
@@ -3316,19 +3354,27 @@ const WORDS = [
 
       if (event.inputType === "insertText" || event.inputType === "insertCompositionText") {
         event.preventDefault();
+        mobileTypedSinceKeyboardOpen = true;
+        keyboardOpenScrollPending = false;
+        clearTimeout(keyboardFocusScrollTimer);
+        clearTimeout(keyboardVisualViewportTimer);
 
         const typedLetters = (event.data || "")
           .toLowerCase()
           .replace(/[^a-z]/g, "");
 
         if (typedLetters && currentInput.length < 5) {
-          currentInput = (currentInput + typedLetters).slice(0, 5);
+          currentInput = (currentInput + typedLetters[typedLetters.length - 1]).slice(0, 5);
           clearNotification();
           renderBoard();
         }
 
         syncMobileKeyboardInput();
+        return;
       }
+
+      event.preventDefault();
+      syncMobileKeyboardInput();
     }
 
     function handleKeydown(event) {
@@ -3582,6 +3628,14 @@ const WORDS = [
     mobileKeyboardInput.addEventListener("blur", handleMobileKeyboardBlur);
     mobileKeyboardInput.addEventListener("input", handleMobileKeyboardInput);
     mobileKeyboardInput.addEventListener("beforeinput", handleMobileKeyboardBeforeInput);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", () => {
+        if (keyboardOpenScrollPending && !keyboardOpenScrollDone && !mobileTypedSinceKeyboardOpen) {
+          clearTimeout(keyboardFocusScrollTimer);
+          keyboardFocusScrollTimer = setTimeout(scrollGameAreaForKeyboardOpen, 80);
+        }
+      });
+    }
     document.addEventListener("pointerdown", handlePointerDownForKeyboardDismiss, true);
 
     closeCustomBtn.addEventListener("click", closeCustomModal);
