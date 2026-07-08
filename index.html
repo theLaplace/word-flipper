@@ -49,7 +49,7 @@
       letter-spacing: 1px;
     }
 
-    .subtitle {
+    .sub {
       color: var(--muted);
       font-size: 14px;
       margin-top: 6px;
@@ -61,6 +61,45 @@
       margin: 20px 0 10px;
       flex-wrap: wrap;
       justify-content: center;
+    }
+
+    .difficulty-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .difficulty-control select {
+      border: none;
+      background: var(--button);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-weight: 700;
+      outline: none;
+    }
+
+    .difficulty-control select:hover {
+      background: var(--button-hover);
+    }
+
+    .mobile-keyboard-input {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0.01;
+      border: none;
+      background: transparent;
+      color: transparent;
+      caret-color: transparent;
+      pointer-events: none;
+      z-index: -1;
     }
 
     button {
@@ -269,14 +308,38 @@
 <body>
   <header>
     <h1>Vowel Movement</h1>
-    <div class="subtitle">Change one letter at a time to reach the target word.</div>
+    <div class="sub">Change one letter at a time to reach the target word.</div>
   </header>
 
   <div class="controls">
     <button id="resetBtn">Reset</button>
     <button id="nextBtn">Generate Next</button>
     <button id="customBtn">Custom Game</button>
+
+    <label class="difficulty-control" for="difficultySelect">
+      Difficulty
+      <select id="difficultySelect">
+        <option value="easy">Easy</option>
+        <option value="medium" selected>Medium</option>
+        <option value="hard">Hard</option>
+        <option value="expert">Expert</option>
+        <option value="any">Any</option>
+      </select>
+    </label>
   </div>
+
+  <input
+    id="mobileKeyboardInput"
+    class="mobile-keyboard-input"
+    type="text"
+    inputmode="text"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="none"
+    spellcheck="false"
+    maxlength="5"
+    aria-hidden="true"
+  />
 
   <div id="notification" class="notification"></div>
 
@@ -2656,13 +2719,56 @@ const WORDS = [
     const wordSet = new Set(WORDS);
 
     /*
-      Word graph logic:
-      - Random games now only choose start and target words from the same connected component.
-      - This guarantees there is at least one valid path where each step changes exactly one letter.
+      Word graph and difficulty logic:
+      - Random games only choose start and target words with a valid one-letter-change path.
+      - Difficulty is controlled by shortest solution length, measured in required guesses/changes.
       - Custom games are intentionally not restricted by this graph.
+      - Update these ranges any time you want to adjust the game difficulty.
     */
 
-    const MAX_RANDOM_GAME_GUESSES = 10;
+    const DIFFICULTY_SETTINGS = {
+      easy: {
+        label: "Easy",
+        minGuesses: 3,
+        maxGuesses: 4,
+        minLetterDifferences: 3
+      },
+      medium: {
+        label: "Medium",
+        minGuesses: 5,
+        maxGuesses: 7,
+        minLetterDifferences: 3
+      },
+      hard: {
+        label: "Hard",
+        minGuesses: 8,
+        maxGuesses: 10,
+        minLetterDifferences: 3
+      },
+      expert: {
+        label: "Expert",
+        minGuesses: 11,
+        maxGuesses: 15,
+        minLetterDifferences: 3
+      },
+      any: {
+        label: "Any",
+        minGuesses: 3,
+        maxGuesses: Infinity,
+        minLetterDifferences: 3
+      }
+    };
+
+    let selectedDifficulty = "medium";
+
+    /*
+      Current possible random word combinations in this word list:
+      - Easy: 17,266
+      - Medium: 65,659
+      - Hard: 101,194
+      - Expert: 145,445
+      - Any: 439,551
+    */
 
     function buildPatternBuckets(words) {
       const buckets = new Map();
@@ -2709,9 +2815,13 @@ const WORDS = [
       return neighbourMap;
     }
 
-    function buildValidRandomWordPairs(words, neighbourMap, maxGuesses) {
-      const validPairs = [];
+    function buildValidRandomWordPairsByDifficulty(words, neighbourMap, difficultySettings) {
+      const validPairsByDifficulty = {};
       const wordIndexes = new Map(words.map((word, index) => [word, index]));
+
+      Object.keys(difficultySettings).forEach(key => {
+        validPairsByDifficulty[key] = [];
+      });
 
       words.forEach(start => {
         const distances = new Map([[start, 0]]);
@@ -2723,11 +2833,6 @@ const WORDS = [
           queueIndex += 1;
 
           const currentDistance = distances.get(current);
-
-          if (currentDistance >= maxGuesses) {
-            continue;
-          }
-
           const neighbours = neighbourMap.get(current) || [];
 
           neighbours.forEach(neighbour => {
@@ -2741,37 +2846,48 @@ const WORDS = [
 
         distances.forEach((distance, target) => {
           if (
-            distance > 0 &&
-            distance <= maxGuesses &&
-            wordIndexes.get(start) < wordIndexes.get(target) &&
-            hasEnoughDifferenceForRandomGame(start, target)
+            distance <= 0 ||
+            wordIndexes.get(start) >= wordIndexes.get(target)
           ) {
-            validPairs.push({
-              start,
-              target,
-              shortestPathLength: distance
-            });
+            return;
           }
+
+          Object.entries(difficultySettings).forEach(([difficultyKey, settings]) => {
+            const meetsMinGuesses = distance >= settings.minGuesses;
+            const meetsMaxGuesses = distance <= settings.maxGuesses;
+            const meetsLetterDifference =
+              countDifferences(start, target) >= settings.minLetterDifferences;
+
+            if (meetsMinGuesses && meetsMaxGuesses && meetsLetterDifference) {
+              validPairsByDifficulty[difficultyKey].push({
+                start,
+                target,
+                shortestPathLength: distance
+              });
+            }
+          });
         });
       });
 
-      return validPairs;
+      return validPairsByDifficulty;
     }
 
     const patternBuckets = buildPatternBuckets(WORDS);
     const neighbourMap = buildNeighbourMap(WORDS, patternBuckets);
-    const validRandomWordPairs = buildValidRandomWordPairs(
+    const validRandomWordPairsByDifficulty = buildValidRandomWordPairsByDifficulty(
       WORDS,
       neighbourMap,
-      MAX_RANDOM_GAME_GUESSES
+      DIFFICULTY_SETTINGS
     );
 
     function getRandomConnectedWordPair() {
-      if (validRandomWordPairs.length === 0) {
+      const validPairs = validRandomWordPairsByDifficulty[selectedDifficulty] || [];
+
+      if (validPairs.length === 0) {
         return null;
       }
 
-      const pair = validRandomWordPairs[Math.floor(Math.random() * validRandomWordPairs.length)];
+      const pair = validPairs[Math.floor(Math.random() * validPairs.length)];
 
       if (Math.random() < 0.5) {
         return pair;
@@ -2789,6 +2905,7 @@ const WORDS = [
     let currentWord = "";
     let currentInput = "";
     let guesses = [];
+    let gameSolved = false;
 
     const board = document.getElementById("board");
     const notification = document.getElementById("notification");
@@ -2796,6 +2913,8 @@ const WORDS = [
     const resetBtn = document.getElementById("resetBtn");
     const nextBtn = document.getElementById("nextBtn");
     const customBtn = document.getElementById("customBtn");
+    const difficultySelect = document.getElementById("difficultySelect");
+    const mobileKeyboardInput = document.getElementById("mobileKeyboardInput");
 
     const customModal = document.getElementById("customModal");
     const customStart = document.getElementById("customStart");
@@ -2818,7 +2937,7 @@ const WORDS = [
       const pair = getRandomConnectedWordPair();
 
       if (!pair) {
-        showNotification("Could not find a connected word pair within 10 guesses");
+        showNotification(`Could not find a ${DIFFICULTY_SETTINGS[selectedDifficulty].label} word pair`);
         return;
       }
 
@@ -2831,7 +2950,9 @@ const WORDS = [
       currentWord = startWord;
       currentInput = "";
       guesses = [];
+      gameSolved = false;
 
+      closeShareModal();
       clearNotification();
       renderBoard();
     }
@@ -2851,12 +2972,16 @@ const WORDS = [
         board.appendChild(createWordRow(word, "locked"));
       });
 
-      board.appendChild(createWordRow(currentInput.padEnd(5, " "), "input"));
+      if (!gameSolved) {
+        board.appendChild(createWordRow(currentInput.padEnd(5, " "), "input"));
+      }
 
       const targetLabel = createLabel("Target");
       targetLabel.classList.add("target-label");
       board.appendChild(targetLabel);
       board.appendChild(createWordRow(targetWord, "locked"));
+
+      syncMobileKeyboardInput();
     }
 
     function createLabel(text) {
@@ -2869,6 +2994,11 @@ const WORDS = [
     function createWordRow(word, type) {
       const row = document.createElement("div");
       row.className = "word-row";
+
+      if (type === "input") {
+        row.addEventListener("click", focusMobileKeyboard);
+        row.addEventListener("touchstart", focusMobileKeyboard, { passive: true });
+      }
 
       for (let i = 0; i < 5; i++) {
         const tile = document.createElement("div");
@@ -2891,7 +3021,77 @@ const WORDS = [
       return row;
     }
 
+    function focusMobileKeyboard() {
+      if (
+        gameSolved ||
+        customModal.classList.contains("show") ||
+        shareModal.classList.contains("show")
+      ) {
+        return;
+      }
+
+      mobileKeyboardInput.focus();
+    }
+
+    function syncMobileKeyboardInput() {
+      if (gameSolved) {
+        mobileKeyboardInput.value = "";
+        return;
+      }
+
+      if (document.activeElement !== mobileKeyboardInput) {
+        mobileKeyboardInput.value = currentInput;
+      }
+    }
+
+    function handleMobileKeyboardInput(event) {
+      if (
+        gameSolved ||
+        customModal.classList.contains("show") ||
+        shareModal.classList.contains("show")
+      ) {
+        event.target.value = "";
+        return;
+      }
+
+      const sanitizedValue = event.target.value
+        .toLowerCase()
+        .replace(/[^a-z]/g, "")
+        .slice(0, 5);
+
+      currentInput = sanitizedValue;
+      event.target.value = sanitizedValue;
+
+      clearNotification();
+      renderBoard();
+    }
+
+    function handleMobileKeyboardBeforeInput(event) {
+      if (gameSolved) {
+        event.preventDefault();
+        return;
+      }
+
+      if (event.inputType === "insertLineBreak") {
+        event.preventDefault();
+        submitInput();
+      }
+    }
+
     function handleKeydown(event) {
+      if (gameSolved) {
+        return;
+      }
+
+      if (event.target === mobileKeyboardInput) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitInput();
+        }
+
+        return;
+      }
+
       const key = event.key;
 
       if (key === "Enter") {
@@ -2925,6 +3125,10 @@ const WORDS = [
     }
 
     function submitInput() {
+      if (gameSolved) {
+        return;
+      }
+
       const guess = currentInput.toLowerCase();
 
       if (guess.length !== 5) {
@@ -2960,11 +3164,15 @@ const WORDS = [
       currentInput = "";
 
       clearNotification();
-      renderBoard();
 
       if (guess === targetWord) {
+        gameSolved = true;
+        renderBoard();
         showShareModal();
+        return;
       }
+
+      renderBoard();
     }
 
     function countDifferences(a, b) {
@@ -3030,10 +3238,14 @@ const WORDS = [
       return /^[a-z]{5}$/.test(word) && wordSet.has(word);
     }
 
+    function getCurrentDifficultyLabel() {
+      return DIFFICULTY_SETTINGS[selectedDifficulty]?.label || "Custom";
+    }
+
     function showShareModal() {
       const shareText = buildShareText();
 
-      shareSummary.textContent = `Solved in ${guesses.length} guesses.`;
+      shareSummary.textContent = `Solved in ${guesses.length} guesses on ${getCurrentDifficultyLabel()} difficulty.`;
       shareGrid.textContent = shareText;
 
       shareModal.classList.add("show");
@@ -3056,6 +3268,7 @@ const WORDS = [
       return [
         `Vowel Movement`,
         `${startWord.toUpperCase()} → ${targetWord.toUpperCase()}`,
+        `${getCurrentDifficultyLabel()} difficulty`,
         `${guesses.length} guesses`,
         "",
         ...emojiRows
@@ -3082,6 +3295,16 @@ const WORDS = [
     resetBtn.addEventListener("click", resetGame);
     nextBtn.addEventListener("click", generateRandomGame);
     customBtn.addEventListener("click", openCustomModal);
+
+    difficultySelect.addEventListener("change", event => {
+      selectedDifficulty = event.target.value;
+      closeShareModal();
+      generateRandomGame();
+    });
+
+    board.addEventListener("click", focusMobileKeyboard);
+    mobileKeyboardInput.addEventListener("input", handleMobileKeyboardInput);
+    mobileKeyboardInput.addEventListener("beforeinput", handleMobileKeyboardBeforeInput);
 
     closeCustomBtn.addEventListener("click", closeCustomModal);
     startCustomBtn.addEventListener("click", startCustomGame);
