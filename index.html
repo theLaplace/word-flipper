@@ -268,7 +268,7 @@
 
 <body>
   <header>
-    <h1>Flipple Ladder</h1>
+    <h1> Ladder</h1>
     <div class="subtitle">Change one letter at a time to reach the target word.</div>
   </header>
 
@@ -2662,6 +2662,8 @@ const WORDS = [
       - Custom games are intentionally not restricted by this graph.
     */
 
+    const MAX_RANDOM_GAME_GUESSES = 10;
+
     function buildPatternBuckets(words) {
       const buckets = new Map();
 
@@ -2697,67 +2699,79 @@ const WORDS = [
       return [...neighbours];
     }
 
-    function buildWordComponents(words) {
-      const buckets = buildPatternBuckets(words);
-      const visited = new Set();
-      const components = [];
+    function buildNeighbourMap(words, buckets) {
+      const neighbourMap = new Map();
 
       words.forEach(word => {
-        if (visited.has(word)) {
-          return;
-        }
+        neighbourMap.set(word, getOneLetterNeighbours(word, buckets));
+      });
 
-        const component = [];
-        const queue = [word];
-        visited.add(word);
+      return neighbourMap;
+    }
 
-        while (queue.length > 0) {
-          const current = queue.shift();
-          component.push(current);
+    function buildValidRandomWordPairs(words, neighbourMap, maxGuesses) {
+      const validPairs = [];
+      const wordIndexes = new Map(words.map((word, index) => [word, index]));
 
-          getOneLetterNeighbours(current, buckets).forEach(neighbour => {
-            if (!visited.has(neighbour)) {
-              visited.add(neighbour);
+      words.forEach(start => {
+        const distances = new Map([[start, 0]]);
+        const queue = [start];
+        let queueIndex = 0;
+
+        while (queueIndex < queue.length) {
+          const current = queue[queueIndex];
+          queueIndex += 1;
+
+          const currentDistance = distances.get(current);
+
+          if (currentDistance >= maxGuesses) {
+            continue;
+          }
+
+          const neighbours = neighbourMap.get(current) || [];
+
+          neighbours.forEach(neighbour => {
+            if (!distances.has(neighbour)) {
+              const nextDistance = currentDistance + 1;
+              distances.set(neighbour, nextDistance);
               queue.push(neighbour);
             }
           });
         }
 
-        if (component.length > 1) {
-          components.push(component);
-        }
+        distances.forEach((distance, target) => {
+          if (
+            distance > 0 &&
+            distance <= maxGuesses &&
+            wordIndexes.get(start) < wordIndexes.get(target) &&
+            hasEnoughDifferenceForRandomGame(start, target)
+          ) {
+            validPairs.push({
+              start,
+              target,
+              shortestPathLength: distance
+            });
+          }
+        });
       });
 
-      return components;
+      return validPairs;
     }
 
-    const connectedWordComponents = buildWordComponents(WORDS);
+    const patternBuckets = buildPatternBuckets(WORDS);
+    const neighbourMap = buildNeighbourMap(WORDS, patternBuckets);
+    const validRandomWordPairs = buildValidRandomWordPairs(
+      WORDS,
+      neighbourMap,
+      MAX_RANDOM_GAME_GUESSES
+    );
 
     function getRandomConnectedWordPair() {
-      if (connectedWordComponents.length === 0) {
+      if (validRandomWordPairs.length === 0) {
         return null;
       }
 
-      const validPairs = [];
-
-      connectedWordComponents.forEach(component => {
-        for (let i = 0; i < component.length; i++) {
-          for (let j = i + 1; j < component.length; j++) {
-            const start = component[i];
-            const target = component[j];
-
-            if (hasEnoughDifferenceForRandomGame(start, target)) {
-              validPairs.push({ start, target });
-            }
-          }
-        }
-      });
-
-      if (validPairs.length === 0) {
-        return null;
-      }
-
-      const pair = validPairs[Math.floor(Math.random() * validPairs.length)];
+      const pair = validRandomWordPairs[Math.floor(Math.random() * validRandomWordPairs.length)];
 
       if (Math.random() < 0.5) {
         return pair;
@@ -2765,10 +2779,10 @@ const WORDS = [
 
       return {
         start: pair.target,
-        target: pair.start
+        target: pair.start,
+        shortestPathLength: pair.shortestPathLength
       };
     }
-
 
     let startWord = "";
     let targetWord = "";
@@ -2804,7 +2818,7 @@ const WORDS = [
       const pair = getRandomConnectedWordPair();
 
       if (!pair) {
-        showNotification("Could not find a connected word pair with enough letter difference");
+        showNotification("Could not find a connected word pair within 10 guesses");
         return;
       }
 
@@ -2878,11 +2892,22 @@ const WORDS = [
     }
 
     function handleKeydown(event) {
-      if (customModal.classList.contains("show") || shareModal.classList.contains("show")) {
+      const key = event.key;
+
+      if (key === "Enter") {
+        event.preventDefault();
+
+        if (customModal.classList.contains("show") || shareModal.classList.contains("show")) {
+          return;
+        }
+
+        submitInput();
         return;
       }
 
-      const key = event.key;
+      if (customModal.classList.contains("show") || shareModal.classList.contains("show")) {
+        return;
+      }
 
       if (/^[a-zA-Z]$/.test(key)) {
         if (currentInput.length < 5) {
@@ -2893,12 +2918,9 @@ const WORDS = [
       }
 
       if (key === "Backspace") {
+        event.preventDefault();
         currentInput = currentInput.slice(0, -1);
         renderBoard();
-      }
-
-      if (key === "Enter") {
-        submitInput();
       }
     }
 
@@ -3032,7 +3054,7 @@ const WORDS = [
       });
 
       return [
-        `Flipple Ladder`,
+        `Vowel Movement`,
         `${startWord.toUpperCase()} → ${targetWord.toUpperCase()}`,
         `${guesses.length} guesses`,
         "",
@@ -3067,7 +3089,7 @@ const WORDS = [
     closeShareBtn.addEventListener("click", closeShareModal);
     copyShareBtn.addEventListener("click", copyShareText);
 
-    document.addEventListener("keydown", handleKeydown);
+    document.addEventListener("keydown", handleKeydown, true);
 
     customStart.addEventListener("input", () => {
       customStart.value = customStart.value.replace(/[^a-zA-Z]/g, "").slice(0, 5);
