@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Vowel Movement</title>
 
   <style>
@@ -89,23 +89,17 @@
 
     .mobile-keyboard-input {
       position: fixed;
-      left: 50%;
+      left: 0;
       bottom: 0;
-      width: 2px;
-      height: 2px;
-      opacity: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0.01;
       border: none;
       background: transparent;
       color: transparent;
       caret-color: transparent;
       pointer-events: none;
-      transform: translateX(-50%);
       z-index: -1;
-    }
-
-    .word-row.input-row {
-      scroll-margin-top: 20vh;
-      scroll-margin-bottom: 45vh;
     }
 
     button {
@@ -342,9 +336,8 @@
     autocomplete="off"
     autocorrect="off"
     autocapitalize="none"
-    enterkeyhint="go"
     spellcheck="false"
-    maxlength="32"
+    maxlength="5"
     aria-hidden="true"
   />
 
@@ -2936,10 +2929,6 @@ const WORDS = [
     const copyShareBtn = document.getElementById("copyShareBtn");
     const closeShareBtn = document.getElementById("closeShareBtn");
 
-    let mobileKeyboardOpen = false;
-    let hasPositionedInputForCurrentFocus = false;
-    let targetInputRowViewportCentre = null;
-
     function randomWord() {
       return WORDS[Math.floor(Math.random() * WORDS.length)];
     }
@@ -3007,9 +2996,8 @@ const WORDS = [
       row.className = "word-row";
 
       if (type === "input") {
-        row.classList.add("input-row");
         row.addEventListener("click", focusMobileKeyboard);
-        row.addEventListener("touchend", focusMobileKeyboard);
+        row.addEventListener("touchstart", focusMobileKeyboard, { passive: true });
       }
 
       for (let i = 0; i < 5; i++) {
@@ -3033,94 +3021,53 @@ const WORDS = [
       return row;
     }
 
-    function isGameplayInputBlocked() {
-      return (
+    function focusMobileKeyboard() {
+      if (
         gameSolved ||
         customModal.classList.contains("show") ||
         shareModal.classList.contains("show")
-      );
-    }
-
-    function getInputRow() {
-      return board.querySelector(".input-row");
-    }
-
-    function isMobileLikeDevice() {
-      return (
-        "ontouchstart" in window ||
-        navigator.maxTouchPoints > 0 ||
-        window.matchMedia("(pointer: coarse)").matches
-      );
-    }
-
-    function focusMobileKeyboard() {
-      if (isGameplayInputBlocked()) {
+      ) {
         return;
       }
 
-      mobileKeyboardOpen = true;
-      hasPositionedInputForCurrentFocus = false;
-      mobileKeyboardInput.value = currentInput;
-      setHiddenInputCaretToEnd();
-      mobileKeyboardInput.focus({ preventScroll: true });
-
-      requestAnimationFrame(() => {
-        setHiddenInputCaretToEnd();
-      });
-    }
-
-    function setHiddenInputCaretToEnd() {
-      const endPosition = mobileKeyboardInput.value.length;
-
-      try {
-        mobileKeyboardInput.setSelectionRange(endPosition, endPosition);
-      } catch {
-        // Some mobile browsers can ignore selection updates on hidden inputs.
-      }
+      mobileKeyboardInput.focus();
     }
 
     function syncMobileKeyboardInput() {
       if (gameSolved) {
         mobileKeyboardInput.value = "";
-        mobileKeyboardOpen = false;
-        hasPositionedInputForCurrentFocus = false;
         return;
       }
 
-      mobileKeyboardInput.value = currentInput;
-      setHiddenInputCaretToEnd();
-    }
-
-    function sanitizeMobileValue(value) {
-      return value
-        .toLowerCase()
-        .replace(/[^a-z]/g, "")
-        .slice(0, 5);
+      if (document.activeElement !== mobileKeyboardInput) {
+        mobileKeyboardInput.value = currentInput;
+      }
     }
 
     function handleMobileKeyboardInput(event) {
-      if (isGameplayInputBlocked()) {
+      if (
+        gameSolved ||
+        customModal.classList.contains("show") ||
+        shareModal.classList.contains("show")
+      ) {
         event.target.value = "";
         return;
       }
 
-      const previousInput = currentInput;
-      const sanitizedValue = sanitizeMobileValue(event.target.value);
+      const sanitizedValue = event.target.value
+        .toLowerCase()
+        .replace(/[^a-z]/g, "")
+        .slice(0, 5);
 
       currentInput = sanitizedValue;
       event.target.value = sanitizedValue;
-      setHiddenInputCaretToEnd();
 
       clearNotification();
       renderBoard();
-
-      if (currentInput.length > previousInput.length) {
-        window.setTimeout(restoreInputRowPositionIfNeeded, 0);
-      }
     }
 
     function handleMobileKeyboardBeforeInput(event) {
-      if (isGameplayInputBlocked()) {
+      if (gameSolved) {
         event.preventDefault();
         return;
       }
@@ -3128,149 +3075,20 @@ const WORDS = [
       if (event.inputType === "insertLineBreak") {
         event.preventDefault();
         submitInput();
-        return;
       }
-
-      if (event.inputType === "deleteContentBackward") {
-        event.preventDefault();
-        currentInput = currentInput.slice(0, -1);
-        mobileKeyboardInput.value = currentInput;
-        setHiddenInputCaretToEnd();
-        renderBoard();
-        return;
-      }
-
-      if (event.data && !/^[a-zA-Z]$/.test(event.data)) {
-        event.preventDefault();
-        return;
-      }
-
-      if (event.inputType === "insertText" && currentInput.length >= 5) {
-        event.preventDefault();
-      }
-    }
-
-    function handleMobileKeyboardKeydown(event) {
-      if (isGameplayInputBlocked()) {
-        event.preventDefault();
-        return;
-      }
-
-      if (event.key === "Backspace") {
-        event.preventDefault();
-        currentInput = currentInput.slice(0, -1);
-        mobileKeyboardInput.value = currentInput;
-        setHiddenInputCaretToEnd();
-        renderBoard();
-        return;
-      }
-
-      if (event.key === "Enter") {
-        event.preventDefault();
-        submitInput();
-        return;
-      }
-
-      if (event.key.length === 1 && !/^[a-zA-Z]$/.test(event.key)) {
-        event.preventDefault();
-      }
-    }
-
-    function getDesiredInputRowViewportCentre() {
-      const viewportHeight = window.visualViewport
-        ? window.visualViewport.height
-        : window.innerHeight;
-
-      return viewportHeight / 2;
-    }
-
-    function smoothScrollInputRowToKeyboardPosition() {
-      const inputRow = getInputRow();
-
-      if (!inputRow) {
-        return;
-      }
-
-      targetInputRowViewportCentre = getDesiredInputRowViewportCentre();
-
-      const rowRect = inputRow.getBoundingClientRect();
-      const rowCentre = rowRect.top + rowRect.height / 2;
-      const scrollDelta = rowCentre - targetInputRowViewportCentre;
-
-      if (Math.abs(scrollDelta) < 8) {
-        return;
-      }
-
-      window.scrollBy({
-        top: scrollDelta,
-        left: 0,
-        behavior: "smooth"
-      });
-    }
-
-    function positionInputRowOnceForKeyboard() {
-      if (
-        !mobileKeyboardOpen ||
-        hasPositionedInputForCurrentFocus ||
-        isGameplayInputBlocked()
-      ) {
-        return;
-      }
-
-      hasPositionedInputForCurrentFocus = true;
-      smoothScrollInputRowToKeyboardPosition();
-    }
-
-    function restoreInputRowPositionIfNeeded() {
-      if (
-        !mobileKeyboardOpen ||
-        !hasPositionedInputForCurrentFocus ||
-        isGameplayInputBlocked() ||
-        targetInputRowViewportCentre === null
-      ) {
-        return;
-      }
-
-      const inputRow = getInputRow();
-
-      if (!inputRow) {
-        return;
-      }
-
-      const rowRect = inputRow.getBoundingClientRect();
-      const rowCentre = rowRect.top + rowRect.height / 2;
-      const drift = rowCentre - targetInputRowViewportCentre;
-
-      if (Math.abs(drift) < 48) {
-        return;
-      }
-
-      smoothScrollInputRowToKeyboardPosition();
-    }
-
-    function handleVisualViewportChange() {
-      if (document.activeElement !== mobileKeyboardInput) {
-        return;
-      }
-
-      window.setTimeout(positionInputRowOnceForKeyboard, 120);
-    }
-
-      window.setTimeout(positionInputRowOnceForKeyboard, 140);
-    }
-
-    function handleMobileKeyboardBlur() {
-      mobileKeyboardOpen = false;
-      hasPositionedInputForCurrentFocus = false;
-      targetInputRowViewportCentre = null;
     }
 
     function handleKeydown(event) {
-      if (event.target === mobileKeyboardInput) {
+      if (gameSolved) {
         return;
       }
 
-      if (gameSolved) {
+      if (event.target === mobileKeyboardInput) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitInput();
+        }
+
         return;
       }
 
@@ -3292,26 +3110,17 @@ const WORDS = [
       }
 
       if (/^[a-zA-Z]$/.test(key)) {
-        event.preventDefault();
-
         if (currentInput.length < 5) {
           currentInput += key.toLowerCase();
           clearNotification();
           renderBoard();
         }
-
-        return;
       }
 
       if (key === "Backspace") {
         event.preventDefault();
         currentInput = currentInput.slice(0, -1);
         renderBoard();
-        return;
-      }
-
-      if (key.length === 1) {
-        event.preventDefault();
       }
     }
 
@@ -3493,31 +3302,9 @@ const WORDS = [
       generateRandomGame();
     });
 
-    mobileKeyboardInput.addEventListener("focus", () => {
-      mobileKeyboardOpen = true;
-      setHiddenInputCaretToEnd();
-      window.setTimeout(positionInputRowOnceForKeyboard, 250);
-    });
+    board.addEventListener("click", focusMobileKeyboard);
     mobileKeyboardInput.addEventListener("input", handleMobileKeyboardInput);
     mobileKeyboardInput.addEventListener("beforeinput", handleMobileKeyboardBeforeInput);
-    mobileKeyboardInput.addEventListener("keydown", handleMobileKeyboardKeydown);
-    mobileKeyboardInput.addEventListener("blur", handleMobileKeyboardBlur);
-
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", handleVisualViewportChange);
-    }
-
-    document.addEventListener("touchend", event => {
-      const inputRow = getInputRow();
-
-      if (
-        document.activeElement === mobileKeyboardInput &&
-        inputRow &&
-        !inputRow.contains(event.target)
-      ) {
-        mobileKeyboardInput.blur();
-      }
-    }, { passive: true });
 
     closeCustomBtn.addEventListener("click", closeCustomModal);
     startCustomBtn.addEventListener("click", startCustomGame);
