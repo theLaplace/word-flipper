@@ -12,7 +12,7 @@
     // Cache-busting redirect for GitHub Pages.
     // When someone visits the plain URL, redirect once to the current versioned URL.
     // Update this value whenever APP_VERSION changes.
-    const CACHE_BUST_VERSION = "3.2.0";
+    const CACHE_BUST_VERSION = "3.3.0";
 
     (function redirectToVersionedUrl() {
       const url = new URL(window.location.href);
@@ -450,8 +450,8 @@
   </div>
 
   <script>
-    const APP_VERSION = "3.2.0";
-    const APP_BUILD_DATE = "2026-07-08";
+    const APP_VERSION = "3.3.0";
+    const APP_BUILD_DATE = "2026-07-09";
     const VERSION_STORAGE_KEY = "vowelMovementAppVersion";
 
     /*
@@ -2881,6 +2881,54 @@ const WORDS = [
       return neighbourMap;
     }
 
+    function findShortestPath(start, target) {
+      if (!start || !target || start === target) {
+        return start === target ? [start] : null;
+      }
+
+      const visited = new Set([start]);
+      const previousWord = new Map();
+      const queue = [start];
+      let queueIndex = 0;
+
+      while (queueIndex < queue.length) {
+        const current = queue[queueIndex];
+        queueIndex += 1;
+
+        const neighbours = neighbourMap.get(current) || [];
+
+        for (const neighbour of neighbours) {
+          if (visited.has(neighbour)) {
+            continue;
+          }
+
+          visited.add(neighbour);
+          previousWord.set(neighbour, current);
+
+          if (neighbour === target) {
+            const path = [target];
+            let step = target;
+
+            while (previousWord.has(step)) {
+              step = previousWord.get(step);
+              path.push(step);
+            }
+
+            return path.reverse();
+          }
+
+          queue.push(neighbour);
+        }
+      }
+
+      return null;
+    }
+
+    function getOptimalGuessCount(start, target) {
+      const shortestPath = findShortestPath(start, target);
+      return shortestPath ? shortestPath.length - 1 : null;
+    }
+
     function buildValidRandomWordPairsByDifficulty(words, neighbourMap, difficultySettings) {
       const validPairsByDifficulty = {};
       const wordIndexes = new Map(words.map((word, index) => [word, index]));
@@ -2971,6 +3019,10 @@ const WORDS = [
     let currentWord = "";
     let currentInput = "";
     let guesses = [];
+    let optimalSolutionPath = [];
+    let optimalGuessCount = null;
+    let hintsUsed = 0;
+    const SHOW_HINT_COUNT_ON_SHARE = false;
     let gameSolved = false;
 
     let mobileKeyboardSessionActive = false;
@@ -3089,6 +3141,9 @@ const WORDS = [
       currentWord = startWord;
       currentInput = "";
       guesses = [];
+      optimalSolutionPath = findShortestPath(startWord, targetWord) || [];
+      optimalGuessCount = optimalSolutionPath.length > 0 ? optimalSolutionPath.length - 1 : null;
+      hintsUsed = 0;
       gameSolved = false;
 
       closeShareModal();
@@ -3554,7 +3609,12 @@ const WORDS = [
     function showShareModal() {
       const shareText = buildShareText();
 
-      shareSummary.textContent = `Solved in ${guesses.length} guesses on ${getCurrentDifficultyLabel()} difficulty.`;
+      const scoreText = getScoreText();
+      const optimalText = optimalGuessCount === null
+        ? "No optimal path found"
+        : `Optimal: ${optimalGuessCount}`;
+
+      shareSummary.textContent = `Solved in ${scoreText} guesses on ${getCurrentDifficultyLabel()} difficulty. ${optimalText}.`;
       shareGrid.textContent = shareText;
 
       shareModal.classList.add("show");
@@ -3562,6 +3622,16 @@ const WORDS = [
 
     function closeShareModal() {
       shareModal.classList.remove("show");
+    }
+
+    function getScoreText() {
+      return optimalGuessCount === null
+        ? `${guesses.length}/?`
+        : `${guesses.length}/${optimalGuessCount}`;
+    }
+
+    function getHintCountShareLine() {
+      return `Amount of Hints used ${hintsUsed}`;
     }
 
     function buildShareText() {
@@ -3574,14 +3644,27 @@ const WORDS = [
           .join("");
       });
 
-      return [
+      const shareLines = [
         `Vowel Movement`,
         `${startWord.toUpperCase()} → ${targetWord.toUpperCase()}`,
         `${getCurrentDifficultyLabel()} difficulty`,
-        `${guesses.length} guesses`,
+        `${getScoreText()} guesses`,
         "",
         ...emojiRows
-      ].join("\n");
+      ];
+
+      // Future hint mechanic:
+      // When hints are live, set SHOW_HINT_COUNT_ON_SHARE to true and increment
+      // hintsUsed inside your hint button/function.
+      if (SHOW_HINT_COUNT_ON_SHARE) {
+        shareLines.splice(4, 0, getHintCountShareLine());
+      }
+
+      // If you want the optimal route to appear in the copied share text later,
+      // uncomment the next line.
+      // shareLines.splice(4, 0, `Optimal solution: ${optimalSolutionPath.map(word => word.toUpperCase()).join(" → ")}`);
+
+      return shareLines.join("\n");
     }
 
     async function copyShareText() {
