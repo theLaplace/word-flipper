@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Vowel Movement</title>
 
   <style>
@@ -289,6 +292,45 @@
       font-weight: 800;
     }
 
+
+
+    .app-version {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 6px;
+      opacity: 0.8;
+    }
+
+    .version-refresh-link {
+      display: inline-block;
+      margin-top: 4px;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      opacity: 0.75;
+    }
+
+    .version-refresh-link:hover {
+      background: transparent;
+      color: var(--text);
+      opacity: 1;
+      transform: none;
+    }
+
+    .update-notice {
+      color: var(--yellow);
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 8px;
+      min-height: 18px;
+    }
+
     @media (max-width: 390px) {
       .word-row {
         grid-template-columns: repeat(5, 48px);
@@ -309,12 +351,14 @@
   <header>
     <h1>Vowel Movement</h1>
     <div class="sub">Change one letter at a time to reach the target word.</div>
+    <div id="appVersion" class="app-version">Loading version...</div>
+    <button id="hardRefreshBtn" class="version-refresh-link" type="button">Load Latest Version</button>
   </header>
 
   <div class="controls">
-    <button id="resetBtn">Reset</button>
-    <button id="nextBtn">Generate Next</button>
-    <button id="customBtn">Custom Game</button>
+    <button id="resetBtn" type="button">Reset</button>
+    <button id="nextBtn" type="button">Generate Next</button>
+    <button id="customBtn" type="button">Custom Game</button>
 
     <label class="difficulty-control" for="difficultySelect">
       Difficulty
@@ -341,6 +385,7 @@
     aria-hidden="true"
   />
 
+  <div id="updateNotice" class="update-notice"></div>
   <div id="notification" class="notification"></div>
 
   <main class="game-wrapper">
@@ -366,8 +411,8 @@
       <div id="customError" class="notification"></div>
 
       <div class="modal-actions">
-        <button id="closeCustomBtn">Cancel</button>
-        <button id="startCustomBtn">Start Game</button>
+        <button id="closeCustomBtn" type="button">Cancel</button>
+        <button id="startCustomBtn" type="button">Start Game</button>
       </div>
     </div>
   </div>
@@ -381,13 +426,17 @@
       <div id="shareGrid" class="share-grid"></div>
 
       <div class="modal-actions">
-        <button id="copyShareBtn">Copy</button>
-        <button id="closeShareBtn">Close</button>
+        <button id="copyShareBtn" type="button">Copy</button>
+        <button id="closeShareBtn" type="button">Close</button>
       </div>
     </div>
   </div>
 
   <script>
+    const APP_VERSION = "3.1.0";
+    const APP_BUILD_DATE = "2026-07-08";
+    const VERSION_STORAGE_KEY = "vowelMovementAppVersion";
+
     /*
       Replace this small demo list with your full accepted five-letter word list.
 
@@ -2909,6 +2958,9 @@ const WORDS = [
 
     const board = document.getElementById("board");
     const notification = document.getElementById("notification");
+    const appVersion = document.getElementById("appVersion");
+    const updateNotice = document.getElementById("updateNotice");
+    const hardRefreshBtn = document.getElementById("hardRefreshBtn");
 
     const resetBtn = document.getElementById("resetBtn");
     const nextBtn = document.getElementById("nextBtn");
@@ -2928,6 +2980,69 @@ const WORDS = [
     const shareGrid = document.getElementById("shareGrid");
     const copyShareBtn = document.getElementById("copyShareBtn");
     const closeShareBtn = document.getElementById("closeShareBtn");
+
+    function initializeVersionHandling() {
+      appVersion.textContent = `Version ${APP_VERSION}`;
+
+      const previousVersion = localStorage.getItem(VERSION_STORAGE_KEY);
+
+      if (previousVersion && previousVersion !== APP_VERSION) {
+        updateNotice.textContent = `Updated from v${previousVersion} to v${APP_VERSION}.`;
+      }
+
+      localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+      checkForNewVersion();
+    }
+
+    function hardRefreshToLatestVersion() {
+      const url = new URL(window.location.href);
+      url.searchParams.set("v", `${APP_VERSION}-${Date.now()}`);
+      window.location.replace(url.toString());
+    }
+
+    async function checkForNewVersion() {
+      if (window.location.protocol === "file:") {
+        return;
+      }
+
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("versionCheck", Date.now().toString());
+
+        const response = await fetch(url.toString(), {
+          cache: "no-store"
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const latestHtml = await response.text();
+        const versionMatch = latestHtml.match(/const APP_VERSION = "([^"]+)"/);
+        const latestVersion = versionMatch ? versionMatch[1] : null;
+
+        if (latestVersion && latestVersion !== APP_VERSION) {
+          updateNotice.textContent = `A newer version is available: v${latestVersion}. Tap Load Latest Version.`;
+        }
+      } catch (error) {
+        console.warn("Version check failed", error);
+      }
+    }
+
+    function showStartupError(error) {
+      console.error(error);
+
+      if (notification) {
+        notification.textContent = "Something went wrong loading the game. Tap Load Latest Version, then try again.";
+      }
+
+      if (board && board.children.length === 0) {
+        board.innerHTML = `
+          <div class="row-label">Load error</div>
+          <div class="notification">The game could not render correctly.</div>
+        `;
+      }
+    }
 
     function randomWord() {
       return WORDS[Math.floor(Math.random() * WORDS.length)];
@@ -3311,6 +3426,7 @@ const WORDS = [
 
     closeShareBtn.addEventListener("click", closeShareModal);
     copyShareBtn.addEventListener("click", copyShareText);
+    hardRefreshBtn.addEventListener("click", hardRefreshToLatestVersion);
 
     document.addEventListener("keydown", handleKeydown, true);
 
@@ -3322,7 +3438,15 @@ const WORDS = [
       customTarget.value = customTarget.value.replace(/[^a-zA-Z]/g, "").slice(0, 5);
     });
 
-    generateRandomGame();
+    window.addEventListener("error", event => showStartupError(event.error || event.message));
+    window.addEventListener("unhandledrejection", event => showStartupError(event.reason));
+
+    try {
+      initializeVersionHandling();
+      generateRandomGame();
+    } catch (error) {
+      showStartupError(error);
+    }
   </script>
 </body>
 </html>
