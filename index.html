@@ -2938,6 +2938,7 @@ const WORDS = [
 
     let mobileKeyboardOpen = false;
     let hasPositionedInputForCurrentFocus = false;
+    let targetInputRowViewportCentre = null;
 
     function randomWord() {
       return WORDS[Math.floor(Math.random() * WORDS.length)];
@@ -3103,13 +3104,19 @@ const WORDS = [
         return;
       }
 
+      const previousInput = currentInput;
       const sanitizedValue = sanitizeMobileValue(event.target.value);
+
       currentInput = sanitizedValue;
       event.target.value = sanitizedValue;
       setHiddenInputCaretToEnd();
 
       clearNotification();
       renderBoard();
+
+      if (currentInput.length > previousInput.length) {
+        window.setTimeout(restoreInputRowPositionIfNeeded, 0);
+      }
     }
 
     function handleMobileKeyboardBeforeInput(event) {
@@ -3169,11 +3176,57 @@ const WORDS = [
       }
     }
 
+    function getDesiredInputRowViewportCentre() {
+      const viewportHeight = window.visualViewport
+        ? window.visualViewport.height
+        : window.innerHeight;
+
+      return viewportHeight / 2;
+    }
+
+    function smoothScrollInputRowToKeyboardPosition() {
+      const inputRow = getInputRow();
+
+      if (!inputRow) {
+        return;
+      }
+
+      targetInputRowViewportCentre = getDesiredInputRowViewportCentre();
+
+      const rowRect = inputRow.getBoundingClientRect();
+      const rowCentre = rowRect.top + rowRect.height / 2;
+      const scrollDelta = rowCentre - targetInputRowViewportCentre;
+
+      if (Math.abs(scrollDelta) < 8) {
+        return;
+      }
+
+      window.scrollBy({
+        top: scrollDelta,
+        left: 0,
+        behavior: "smooth"
+      });
+    }
+
     function positionInputRowOnceForKeyboard() {
       if (
         !mobileKeyboardOpen ||
         hasPositionedInputForCurrentFocus ||
         isGameplayInputBlocked()
+      ) {
+        return;
+      }
+
+      hasPositionedInputForCurrentFocus = true;
+      smoothScrollInputRowToKeyboardPosition();
+    }
+
+    function restoreInputRowPositionIfNeeded() {
+      if (
+        !mobileKeyboardOpen ||
+        !hasPositionedInputForCurrentFocus ||
+        isGameplayInputBlocked() ||
+        targetInputRowViewportCentre === null
       ) {
         return;
       }
@@ -3184,22 +3237,15 @@ const WORDS = [
         return;
       }
 
-      hasPositionedInputForCurrentFocus = true;
-
-      const viewportHeight = window.visualViewport
-        ? window.visualViewport.height
-        : window.innerHeight;
-
       const rowRect = inputRow.getBoundingClientRect();
       const rowCentre = rowRect.top + rowRect.height / 2;
-      const desiredCentre = viewportHeight / 2;
-      const scrollDelta = rowCentre - desiredCentre;
+      const drift = rowCentre - targetInputRowViewportCentre;
 
-      window.scrollBy({
-        top: scrollDelta,
-        left: 0,
-        behavior: "smooth"
-      });
+      if (Math.abs(drift) < 48) {
+        return;
+      }
+
+      smoothScrollInputRowToKeyboardPosition();
     }
 
     function handleVisualViewportChange() {
@@ -3207,12 +3253,16 @@ const WORDS = [
         return;
       }
 
+      window.setTimeout(positionInputRowOnceForKeyboard, 120);
+    }
+
       window.setTimeout(positionInputRowOnceForKeyboard, 140);
     }
 
     function handleMobileKeyboardBlur() {
       mobileKeyboardOpen = false;
       hasPositionedInputForCurrentFocus = false;
+      targetInputRowViewportCentre = null;
     }
 
     function handleKeydown(event) {
