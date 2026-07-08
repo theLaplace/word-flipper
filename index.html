@@ -12,7 +12,7 @@
     // Cache-busting redirect for GitHub Pages.
     // When someone visits the plain URL, redirect once to the current versioned URL.
     // Update this value whenever APP_VERSION changes.
-    const CACHE_BUST_VERSION = "3.1.0";
+    const CACHE_BUST_VERSION = "3.2.0";
 
     (function redirectToVersionedUrl() {
       const url = new URL(window.location.href);
@@ -450,7 +450,7 @@
   </div>
 
   <script>
-    const APP_VERSION = "3.1.0";
+    const APP_VERSION = "3.2.0";
     const APP_BUILD_DATE = "2026-07-08";
     const VERSION_STORAGE_KEY = "vowelMovementAppVersion";
 
@@ -2973,6 +2973,10 @@ const WORDS = [
     let guesses = [];
     let gameSolved = false;
 
+    let mobileKeyboardSessionActive = false;
+    let keyboardFocusScrollTimer = null;
+    let keyboardVisualViewportTimer = null;
+
     const board = document.getElementById("board");
     const notification = document.getElementById("notification");
     const appVersion = document.getElementById("appVersion");
@@ -3128,6 +3132,7 @@ const WORDS = [
       row.className = "word-row";
 
       if (type === "input") {
+        row.classList.add("mobile-input-row");
         row.addEventListener("click", focusMobileKeyboard);
         row.addEventListener("touchstart", focusMobileKeyboard, { passive: true });
       }
@@ -3162,17 +3167,100 @@ const WORDS = [
         return;
       }
 
-      mobileKeyboardInput.focus();
+      const wasAlreadyFocused = document.activeElement === mobileKeyboardInput;
+
+      mobileKeyboardInput.focus({ preventScroll: true });
+      setMobileKeyboardCaretToEnd();
+
+      if (!mobileKeyboardSessionActive || !wasAlreadyFocused) {
+        mobileKeyboardSessionActive = true;
+        scheduleKeyboardOpenScroll();
+      }
     }
 
     function syncMobileKeyboardInput() {
-      if (gameSolved) {
-        mobileKeyboardInput.value = "";
+      mobileKeyboardInput.value = gameSolved ? "" : currentInput;
+      setMobileKeyboardCaretToEnd();
+    }
+
+    function setMobileKeyboardCaretToEnd() {
+      requestAnimationFrame(() => {
+        try {
+          const end = mobileKeyboardInput.value.length;
+          mobileKeyboardInput.setSelectionRange(end, end);
+        } catch {
+          // Some mobile browsers do not allow selection changes on hidden inputs.
+        }
+      });
+    }
+
+    function handleMobileKeyboardFocus() {
+      if (!mobileKeyboardSessionActive) {
+        mobileKeyboardSessionActive = true;
+        scheduleKeyboardOpenScroll();
+      }
+
+      syncMobileKeyboardInput();
+    }
+
+    function handleMobileKeyboardBlur() {
+      mobileKeyboardSessionActive = false;
+      clearTimeout(keyboardFocusScrollTimer);
+      clearTimeout(keyboardVisualViewportTimer);
+    }
+
+    function scheduleKeyboardOpenScroll() {
+      clearTimeout(keyboardFocusScrollTimer);
+      clearTimeout(keyboardVisualViewportTimer);
+
+      keyboardFocusScrollTimer = setTimeout(scrollGameAreaForKeyboardOpen, 120);
+
+      if (window.visualViewport) {
+        keyboardVisualViewportTimer = setTimeout(scrollGameAreaForKeyboardOpen, 420);
+      }
+    }
+
+    function getDocumentTop(element) {
+      const rect = element.getBoundingClientRect();
+      return rect.top + window.scrollY;
+    }
+
+    function scrollGameAreaForKeyboardOpen() {
+      if (document.activeElement !== mobileKeyboardInput || !mobileKeyboardSessionActive) {
         return;
       }
 
-      if (document.activeElement !== mobileKeyboardInput) {
-        mobileKeyboardInput.value = currentInput;
+      const inputRow = board.querySelector(".mobile-input-row");
+      const targetRows = board.querySelectorAll(".word-row");
+      const targetRow = targetRows[targetRows.length - 1];
+
+      if (!inputRow || !targetRow) {
+        return;
+      }
+
+      const viewport = window.visualViewport;
+      const visibleTop = viewport ? viewport.pageTop : window.scrollY;
+      const visibleHeight = viewport ? viewport.height : window.innerHeight;
+      const keyboardTop = visibleTop + visibleHeight;
+      const safeGap = 14;
+
+      const inputRect = inputRow.getBoundingClientRect();
+      const targetRect = targetRow.getBoundingClientRect();
+      const inputTop = getDocumentTop(inputRow);
+      const targetBottom = getDocumentTop(targetRow) + targetRect.height;
+
+      const desiredInputTop = visibleTop + ((visibleHeight - targetRect.height - safeGap - inputRect.height) / 2);
+      let desiredScrollTop = inputTop - Math.max(24, desiredInputTop - visibleTop);
+
+      const targetVisibleScrollTop = targetBottom - visibleHeight + safeGap;
+      desiredScrollTop = Math.max(desiredScrollTop, targetVisibleScrollTop);
+      desiredScrollTop = Math.max(0, desiredScrollTop);
+
+      if (Math.abs(window.scrollY - desiredScrollTop) > 8) {
+        window.scrollTo({
+          top: desiredScrollTop,
+          behavior: "smooth"
+        });
       }
     }
 
@@ -3182,7 +3270,8 @@ const WORDS = [
         customModal.classList.contains("show") ||
         shareModal.classList.contains("show")
       ) {
-        event.target.value = "";
+        currentInput = "";
+        syncMobileKeyboardInput();
         return;
       }
 
@@ -3191,15 +3280,21 @@ const WORDS = [
         .replace(/[^a-z]/g, "")
         .slice(0, 5);
 
-      currentInput = sanitizedValue;
-      event.target.value = sanitizedValue;
+      if (sanitizedValue !== currentInput) {
+        currentInput = sanitizedValue;
+        clearNotification();
+        renderBoard();
+      }
 
-      clearNotification();
-      renderBoard();
+      syncMobileKeyboardInput();
     }
 
     function handleMobileKeyboardBeforeInput(event) {
-      if (gameSolved) {
+      if (
+        gameSolved ||
+        customModal.classList.contains("show") ||
+        shareModal.classList.contains("show")
+      ) {
         event.preventDefault();
         return;
       }
@@ -3207,6 +3302,32 @@ const WORDS = [
       if (event.inputType === "insertLineBreak") {
         event.preventDefault();
         submitInput();
+        return;
+      }
+
+      if (event.inputType === "deleteContentBackward" || event.inputType === "deleteContentForward") {
+        event.preventDefault();
+        currentInput = currentInput.slice(0, -1);
+        clearNotification();
+        renderBoard();
+        syncMobileKeyboardInput();
+        return;
+      }
+
+      if (event.inputType === "insertText" || event.inputType === "insertCompositionText") {
+        event.preventDefault();
+
+        const typedLetters = (event.data || "")
+          .toLowerCase()
+          .replace(/[^a-z]/g, "");
+
+        if (typedLetters && currentInput.length < 5) {
+          currentInput = (currentInput + typedLetters).slice(0, 5);
+          clearNotification();
+          renderBoard();
+        }
+
+        syncMobileKeyboardInput();
       }
     }
 
@@ -3219,6 +3340,16 @@ const WORDS = [
         if (event.key === "Enter") {
           event.preventDefault();
           submitInput();
+          return;
+        }
+
+        if (event.key === "Backspace") {
+          event.preventDefault();
+          currentInput = currentInput.slice(0, -1);
+          clearNotification();
+          renderBoard();
+          syncMobileKeyboardInput();
+          return;
         }
 
         return;
@@ -3424,6 +3555,19 @@ const WORDS = [
       }
     }
 
+    function handlePointerDownForKeyboardDismiss(event) {
+      if (document.activeElement !== mobileKeyboardInput) {
+        return;
+      }
+
+      const tappedInputRow = event.target.closest(".mobile-input-row");
+      const tappedModal = event.target.closest(".modal");
+
+      if (!tappedInputRow && !tappedModal) {
+        mobileKeyboardInput.blur();
+      }
+    }
+
     resetBtn.addEventListener("click", resetGame);
     nextBtn.addEventListener("click", generateRandomGame);
     customBtn.addEventListener("click", openCustomModal);
@@ -3434,9 +3578,11 @@ const WORDS = [
       generateRandomGame();
     });
 
-    board.addEventListener("click", focusMobileKeyboard);
+    mobileKeyboardInput.addEventListener("focus", handleMobileKeyboardFocus);
+    mobileKeyboardInput.addEventListener("blur", handleMobileKeyboardBlur);
     mobileKeyboardInput.addEventListener("input", handleMobileKeyboardInput);
     mobileKeyboardInput.addEventListener("beforeinput", handleMobileKeyboardBeforeInput);
+    document.addEventListener("pointerdown", handlePointerDownForKeyboardDismiss, true);
 
     closeCustomBtn.addEventListener("click", closeCustomModal);
     startCustomBtn.addEventListener("click", startCustomGame);
