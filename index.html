@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Vowel Movement</title>
 
   <style>
@@ -89,17 +89,26 @@
 
     .mobile-keyboard-input {
       position: fixed;
-      left: 0;
-      bottom: 0;
+      left: 50%;
+      bottom: env(keyboard-inset-height, 0px);
       width: 1px;
       height: 1px;
-      opacity: 0.01;
+      opacity: 0;
       border: none;
       background: transparent;
       color: transparent;
       caret-color: transparent;
       pointer-events: none;
-      z-index: -1;
+      transform: translateX(-50%);
+      z-index: 1;
+    }
+
+    .board.keyboard-active {
+      scroll-margin-bottom: 45vh;
+    }
+
+    .word-row.input-row {
+      scroll-margin-bottom: 45vh;
     }
 
     button {
@@ -332,10 +341,11 @@
     id="mobileKeyboardInput"
     class="mobile-keyboard-input"
     type="text"
-    inputmode="text"
+    inputmode="latin"
     autocomplete="off"
     autocorrect="off"
     autocapitalize="none"
+    enterkeyhint="go"
     spellcheck="false"
     maxlength="5"
     aria-hidden="true"
@@ -2929,6 +2939,10 @@ const WORDS = [
     const copyShareBtn = document.getElementById("copyShareBtn");
     const closeShareBtn = document.getElementById("closeShareBtn");
 
+    let lastMobileInputValue = "";
+    let pendingMobileFocusTimer = null;
+    let viewportSettleTimer = null;
+
     function randomWord() {
       return WORDS[Math.floor(Math.random() * WORDS.length)];
     }
@@ -2982,6 +2996,10 @@ const WORDS = [
       board.appendChild(createWordRow(targetWord, "locked"));
 
       syncMobileKeyboardInput();
+
+      if (document.activeElement === mobileKeyboardInput && !gameSolved) {
+        keepInputRowVisible();
+      }
     }
 
     function createLabel(text) {
@@ -2996,8 +3014,10 @@ const WORDS = [
       row.className = "word-row";
 
       if (type === "input") {
+        row.classList.add("input-row");
         row.addEventListener("click", focusMobileKeyboard);
         row.addEventListener("touchstart", focusMobileKeyboard, { passive: true });
+        row.addEventListener("pointerdown", focusMobileKeyboard);
       }
 
       for (let i = 0; i < 5; i++) {
@@ -3021,53 +3041,87 @@ const WORDS = [
       return row;
     }
 
-    function focusMobileKeyboard() {
-      if (
+    function isGameplayInputBlocked() {
+      return (
         gameSolved ||
         customModal.classList.contains("show") ||
         shareModal.classList.contains("show")
-      ) {
+      );
+    }
+
+    function getInputRow() {
+      return board.querySelector(".input-row");
+    }
+
+    function isMobileLikeDevice() {
+      return (
+        "ontouchstart" in window ||
+        navigator.maxTouchPoints > 0 ||
+        window.matchMedia("(pointer: coarse)").matches
+      );
+    }
+
+    function focusMobileKeyboard() {
+      if (isGameplayInputBlocked()) {
         return;
       }
 
-      mobileKeyboardInput.focus();
+      clearTimeout(pendingMobileFocusTimer);
+
+      mobileKeyboardInput.value = currentInput;
+      lastMobileInputValue = currentInput;
+      mobileKeyboardInput.focus({ preventScroll: true });
+
+      keepInputRowVisible();
+
+      pendingMobileFocusTimer = setTimeout(() => {
+        if (!isGameplayInputBlocked()) {
+          mobileKeyboardInput.focus({ preventScroll: true });
+          keepInputRowVisible();
+        }
+      }, 80);
     }
 
     function syncMobileKeyboardInput() {
       if (gameSolved) {
         mobileKeyboardInput.value = "";
+        lastMobileInputValue = "";
+        board.classList.remove("keyboard-active");
         return;
       }
 
-      if (document.activeElement !== mobileKeyboardInput) {
-        mobileKeyboardInput.value = currentInput;
-      }
+      mobileKeyboardInput.value = currentInput;
+      lastMobileInputValue = currentInput;
     }
 
-    function handleMobileKeyboardInput(event) {
-      if (
-        gameSolved ||
-        customModal.classList.contains("show") ||
-        shareModal.classList.contains("show")
-      ) {
-        event.target.value = "";
-        return;
-      }
-
-      const sanitizedValue = event.target.value
+    function sanitizeMobileValue(value) {
+      return value
         .toLowerCase()
         .replace(/[^a-z]/g, "")
         .slice(0, 5);
+    }
+
+    function handleMobileKeyboardInput(event) {
+      if (isGameplayInputBlocked()) {
+        event.target.value = "";
+        lastMobileInputValue = "";
+        return;
+      }
+
+      const rawValue = event.target.value;
+      const sanitizedValue = sanitizeMobileValue(rawValue);
 
       currentInput = sanitizedValue;
       event.target.value = sanitizedValue;
+      lastMobileInputValue = sanitizedValue;
 
       clearNotification();
       renderBoard();
+      keepInputRowVisible();
     }
 
     function handleMobileKeyboardBeforeInput(event) {
-      if (gameSolved) {
+      if (isGameplayInputBlocked()) {
         event.preventDefault();
         return;
       }
@@ -3075,20 +3129,101 @@ const WORDS = [
       if (event.inputType === "insertLineBreak") {
         event.preventDefault();
         submitInput();
+        return;
+      }
+
+      if (event.inputType === "deleteContentBackward") {
+        event.preventDefault();
+        currentInput = currentInput.slice(0, -1);
+        renderBoard();
+        keepInputRowVisible();
+        return;
+      }
+
+      if (event.data && !/^[a-zA-Z]$/.test(event.data)) {
+        event.preventDefault();
+        return;
+      }
+
+      if (event.inputType === "insertText" && currentInput.length >= 5) {
+        event.preventDefault();
       }
     }
 
-    function handleKeydown(event) {
+    function handleMobileKeyboardKeydown(event) {
+      if (isGameplayInputBlocked()) {
+        event.preventDefault();
+        return;
+      }
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        currentInput = currentInput.slice(0, -1);
+        renderBoard();
+        keepInputRowVisible();
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitInput();
+        return;
+      }
+
+      if (event.key.length === 1 && !/^[a-zA-Z]$/.test(event.key)) {
+        event.preventDefault();
+      }
+    }
+
+    function keepInputRowVisible() {
       if (gameSolved) {
         return;
       }
 
-      if (event.target === mobileKeyboardInput) {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          submitInput();
-        }
+      const inputRow = getInputRow();
 
+      if (!inputRow) {
+        return;
+      }
+
+      board.classList.add("keyboard-active");
+
+      requestAnimationFrame(() => {
+        inputRow.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+          inline: "nearest"
+        });
+      });
+    }
+
+    function handleVisualViewportChange() {
+      if (
+        document.activeElement !== mobileKeyboardInput ||
+        isGameplayInputBlocked()
+      ) {
+        return;
+      }
+
+      clearTimeout(viewportSettleTimer);
+
+      keepInputRowVisible();
+
+      viewportSettleTimer = setTimeout(() => {
+        keepInputRowVisible();
+      }, 180);
+    }
+
+    function handleMobileKeyboardBlur() {
+      board.classList.remove("keyboard-active");
+    }
+
+    function handleKeydown(event) {
+      if (event.target === mobileKeyboardInput) {
+        return;
+      }
+
+      if (gameSolved) {
         return;
       }
 
@@ -3110,17 +3245,35 @@ const WORDS = [
       }
 
       if (/^[a-zA-Z]$/.test(key)) {
+        event.preventDefault();
+
         if (currentInput.length < 5) {
           currentInput += key.toLowerCase();
           clearNotification();
           renderBoard();
+
+          if (isMobileLikeDevice()) {
+            keepInputRowVisible();
+          }
         }
+
+        return;
       }
 
       if (key === "Backspace") {
         event.preventDefault();
         currentInput = currentInput.slice(0, -1);
         renderBoard();
+
+        if (isMobileLikeDevice()) {
+          keepInputRowVisible();
+        }
+
+        return;
+      }
+
+      if (key.length === 1) {
+        event.preventDefault();
       }
     }
 
@@ -3305,6 +3458,13 @@ const WORDS = [
     board.addEventListener("click", focusMobileKeyboard);
     mobileKeyboardInput.addEventListener("input", handleMobileKeyboardInput);
     mobileKeyboardInput.addEventListener("beforeinput", handleMobileKeyboardBeforeInput);
+    mobileKeyboardInput.addEventListener("keydown", handleMobileKeyboardKeydown);
+    mobileKeyboardInput.addEventListener("blur", handleMobileKeyboardBlur);
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", handleVisualViewportChange);
+      window.visualViewport.addEventListener("scroll", handleVisualViewportChange);
+    }
 
     closeCustomBtn.addEventListener("click", closeCustomModal);
     startCustomBtn.addEventListener("click", startCustomGame);
